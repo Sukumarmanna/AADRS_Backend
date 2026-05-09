@@ -1,5 +1,5 @@
-fastapi
-uvicorn
-motor
-python-multipart
-gunicorn
+fastapi==0.110.0
+uvicorn==0.27.1
+motor==3.3.2
+python-multipart==0.0.9
+pydantic==2.6.1

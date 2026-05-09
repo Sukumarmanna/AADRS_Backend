@@ -2,13 +2,13 @@ from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Request
 from motor.motor_asyncio import AsyncIOMotorClient
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 import uvicorn
 import os
 import shutil
 import logging
 
-# Logging setup taaki Render logs mein error saaf dikhe
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,6 @@ app.add_middleware(
 )
 
 # --- MONGODB CONNECTION ---
-# Render Environment Variable se URL uthayega
 MONGO_URL = os.getenv("MONGO_URL")
 
 if not MONGO_URL:
@@ -51,6 +50,16 @@ except Exception as e:
     logger.error(f"MongoDB Connection Failed: {e}")
 
 # --- MODELS ---
+
+class RegisterSchema(BaseModel):
+    name: str
+    email: str
+    mobNo: str
+    password: str
+    state: str
+    locality: str
+    pincode: str
+
 class LoginSchema(BaseModel):
     identifier: str
     password: str
@@ -61,6 +70,31 @@ class LoginSchema(BaseModel):
 async def root():
     return {"status": "Online", "msg": "AADRS Backend is Live", "database": "Connected"}
 
+# 1. REGISTER ENDPOINT
+@app.post("/register")
+async def register(data: RegisterSchema):
+    try:
+        # Check if user already exists by Mobile or Email
+        existing_user = await users_collection.find_one({
+            "$or": [{"email": data.email}, {"mobNo": data.mobNo}]
+        })
+        
+        if existing_user:
+            logger.warning(f"Registration failed: User already exists ({data.mobNo})")
+            raise HTTPException(status_code=400, detail="Email or Mobile already registered")
+        
+        user_dict = data.dict()
+        result = await users_collection.insert_one(user_dict)
+        logger.info(f"New User Registered: {data.mobNo}")
+        return {"message": "Registration Successful", "id": str(result.inserted_id)}
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Registration Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+# 2. LOGIN ENDPOINT
 @app.post("/login")
 async def login(data: LoginSchema):
     user = await users_collection.find_one({
@@ -68,9 +102,13 @@ async def login(data: LoginSchema):
         "password": data.password
     })
     if user:
+        logger.info(f"Login Success: {data.identifier}")
         return {"message": "Login Success", "mobNo": user["mobNo"]}
+    
+    logger.warning(f"Login Failed: {data.identifier}")
     raise HTTPException(status_code=401, detail="Invalid Credentials")
 
+# 3. SEND ALERT
 @app.post("/send-alert")
 async def send_alert(request: Request):
     try:
@@ -82,6 +120,7 @@ async def send_alert(request: Request):
         logger.error(f"Alert Error: {e}")
         raise HTTPException(status_code=400, detail="Invalid Alert Data")
 
+# 4. GET ALERTS
 @app.get("/get-alerts")
 async def get_alerts():
     alerts = await alerts_collection.find().sort("_id", -1).to_list(10)
@@ -89,6 +128,7 @@ async def get_alerts():
         a["_id"] = str(a["_id"])
     return alerts
 
+# 5. PROFILE FETCH
 @app.get("/profile/{mob_no}")
 async def get_profile(mob_no: str):
     user = await users_collection.find_one({"mobNo": mob_no}, {"password": 0, "_id": 0})
@@ -96,6 +136,7 @@ async def get_profile(mob_no: str):
         return user
     raise HTTPException(status_code=404, detail="User not found")
 
+# 6. IMAGE UPLOAD
 @app.post("/upload-profile-pic")
 async def upload_pic(mobNo: str = Form(...), profilePic: UploadFile = File(...)):
     try:

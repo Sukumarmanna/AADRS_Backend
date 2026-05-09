@@ -1,4 +1,5 @@
 fastapi
 uvicorn
 motor
-pydantic[email]
+python-multipart
+pydantic

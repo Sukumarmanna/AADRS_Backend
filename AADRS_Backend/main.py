@@ -15,22 +15,23 @@ app = FastAPI()
 # --- FIXED CORS SETTINGS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- DATABASE CONNECTION ---
+# Render environment variable use karega, nahi toh fallback connection string
 MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://kumarsanumanna_db_user:Sukumar123456@aadrs-cluster.xgenmea.mongodb.net/aadrs_db?retryWrites=true&w=majority")
 
 try:
     client = AsyncIOMotorClient(MONGO_URL)
     db = client.aadrs_db
     users_collection = db.users
-    logger.info("✅ Connected to MongoDB Atlas")
+    logger.info("✅ MongoDB Connected")
 except Exception as e:
-    logger.error(f"❌ MongoDB Connection Error: {e}")
+    logger.error(f"❌ MongoDB Error: {e}")
 
 # --- SCHEMAS ---
 class RegisterSchema(BaseModel):
@@ -42,30 +43,33 @@ class RegisterSchema(BaseModel):
     locality: str
     pincode: str
 
-# --- ENDPOINTS ---
+class LoginSchema(BaseModel):
+    identifier: str
+    password: str
 
+# --- ENDPOINTS ---
 @app.get("/")
 async def root():
     return {"status": "Online", "msg": "AADRS Backend is Live"}
 
 @app.post("/register")
 async def register(data: RegisterSchema):
-    try:
-        # Check if user already exists
-        existing_user = await users_collection.find_one({"mobNo": data.mobNo})
-        if existing_user:
-            return {"status": "error", "message": "Mobile number already registered"}
-        
-        user_dict = data.dict()
-        result = await users_collection.insert_one(user_dict)
-        logger.info(f"👤 New User Registered: {data.mobNo}")
-        return {"status": "success", "message": "Account created successfully", "id": str(result.inserted_id)}
-    
-    except Exception as e:
-        logger.error(f"❌ Registration Error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+    existing = await users_collection.find_one({"mobNo": data.mobNo})
+    if existing:
+        return {"status": "error", "message": "Already registered"}
+    await users_collection.insert_one(data.dict())
+    return {"status": "success", "message": "Registered"}
 
-# Render needs this port binding
+@app.post("/login")
+async def login(data: LoginSchema):
+    user = await users_collection.find_one({
+        "$or": [{"email": data.identifier}, {"mobNo": data.identifier}],
+        "password": data.password
+    })
+    if user:
+        return {"status": "success", "mobNo": user["mobNo"]}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
